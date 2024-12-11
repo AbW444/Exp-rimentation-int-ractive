@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Particle Environment</title>
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      font-family: 'Roboto', Arial, sans-serif; 
+      background-color: #0e0e0e; 
+    }
+    canvas { display: block; }
+    #ui-overlay {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 10px;
+    }
+    #ui-overlay button {
+      background-color: #00ffcc;
+      color: #0e0e0e;
+      border: none;
+      padding: 15px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 5px;
+      font-weight: bold;
+      transition: background-color 0.3s;
+      outline: none;
+      box-shadow: none;
+    }
+    #ui-overlay button:hover {
+      background-color: #00e6b3;
+      outline: none;
+    }
+    @media (max-width: 768px) {
+      #ui-overlay button {
+        padding: 10px 15px;
+        font-size: 14px;
+      }
+    }
+    .arrow {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 50px;
+      height: 50px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: #00ffcc;
+      border: none;
+      cursor: pointer;
+      font-size: 30px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      z-index: 5;
+      transition: background-color 0.3s;
+      outline: none;
+      box-shadow: none;
+    }
+    .arrow:hover {
+      background-color: #00e6b3;
+      outline: none;
+    }
+    #arrow-left { left: 10px; }
+    #arrow-right { right: 10px; }
+
+    #title {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 48px;
+      font-weight: 900;
+      color: #00ffcc;
+      text-shadow: 0px 0px 15px rgba(0, 255, 204, 0.7);
+      z-index: 10;
+      pointer-events: auto;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    #title:hover {
+      text-decoration: none;
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="title" onclick="location.reload();">AURORA UNREALIS</div>
+  <div id="ui-overlay">
+    <button id="resetCamera">Reset Camera</button>
+    <button id="toggleZoom">Toggle Zoom</button>
+  </div>
+  <button id="arrow-left" class="arrow">&lt;</button>
+  <button id="arrow-right" class="arrow">&gt;</button>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // Initialisation de la scène, caméra et rendu
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    let particles;
+    let snowParticles;
+    let shootingStars = [];
+    let isTransitioning = false;
+    let isDragging = false;
+    let isZoomedIn = false;
+    let previousMousePosition = { x: 0, y: 0 };
+    let currentImageIndex = 1;
+    const maxImageIndex = 9;
+    const textureLoader = new THREE.TextureLoader();
+
+    function loadImage(imageIndex, onComplete) {
+      const imagePath = `./Projet_test_HLS_LMPI/Ressources/test%20${String(imageIndex).padStart(3, '0')}.jpg`;
+
+      textureLoader.load(imagePath, function (texture) {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        const imgWidth = texture.image.width;
+        const imgHeight = texture.image.height;
+        canvas.width = imgWidth;
+        canvas.height = imgHeight;
+        context.drawImage(texture.image, 0, 0, imgWidth, imgHeight);
+        const imgData = context.getImageData(0, 0, imgWidth, imgHeight);
+
+        const particleGeometry = new THREE.BufferGeometry();
+        const particleMaterial = new THREE.PointsMaterial({
+          size: 0.02,
+          vertexColors: true,
+          opacity: 0,
+          transparent: true,
+        });
+
+        const particleVertices = [];
+        const particleColors = [];
+
+        for (let y = 0; y < imgHeight; y++) {
+          for (let x = 0; x < imgWidth; x++) {
+            const i = (y * imgWidth + x) * 4;
+            let r = imgData.data[i] / 255;
+            let g = imgData.data[i + 1] / 255;
+            let b = imgData.data[i + 2] / 255;
+            const a = imgData.data[i + 3] / 255;
+
+            if (a > 0.5) {
+              const posX = (x - imgWidth / 2) / 50;
+              const posY = (y - imgHeight / 2) / 50;
+              const posZ = (Math.random() - 0.5) * 5;
+              particleVertices.push(posX, posY, posZ);
+              particleColors.push(r, g, b);
+            }
+          }
+        }
+
+        particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(particleVertices, 3));
+        particleGeometry.setAttribute('color', new THREE.Float32BufferAttribute(particleColors, 3));
+
+        if (particles) {
+          // Transition de disparition
+          transitionOut(particles, () => {
+            scene.remove(particles);
+            particles = new THREE.Points(particleGeometry, particleMaterial);
+            particles.rotation.x = Math.PI;
+            scene.add(particles);
+            transitionIn(particles, onComplete);
+          });
+        } else {
+          particles = new THREE.Points(particleGeometry, particleMaterial);
+          particles.rotation.x = Math.PI;
+          scene.add(particles);
+          transitionIn(particles, onComplete);
+        }
+      }, undefined, function (err) {
+        console.error(`Une erreur est survenue lors du chargement de l'image ${imageIndex}:`, err);
+      });
+    }
+
+    function transitionOut(object, callback) {
+      isTransitioning = true;
+      const duration = 1000 / 1.5;
+      const startTime = performance.now();
+
+      function animateOut(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        object.material.opacity = 1 - progress;
+        object.scale.set(1 - progress * 0.5, 1 - progress * 0.5, 1 - progress * 0.5);
+
+        if (progress < 1) {
+          requestAnimationFrame(animateOut);
+        } else {
+          if (callback) callback();
+        }
+      }
+
+      requestAnimationFrame(animateOut);
+    }
+
+    function transitionIn(object, callback) {
+      const duration = 1000 / 1.5;
+      const startTime = performance.now();
+
+      function animateIn(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        object.material.opacity = progress;
+        object.scale.set(0.5 + progress * 0.5, 0.5 + progress * 0.5, 0.5 + progress * 0.5);
+
+        if (progress < 1) {
+          requestAnimationFrame(animateIn);
+        } else {
+          isTransitioning = false;
+          if (callback) callback();
+        }
+      }
+
+      requestAnimationFrame(animateIn);
+    }
+
+    function addMoon() {
+      const moonGeometry = new THREE.SphereGeometry(5, 32, 32);
+      const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const moon = new THREE.Mesh(moonGeometry, moonMaterial);
+      moon.position.set(-50, 150, -100);
+      scene.add(moon);
+    }
+
+    function addSatellite() {
+      const satelliteGeometry = new THREE.SphereGeometry(2, 16, 16);
+      const satelliteMaterial = new THREE.MeshBasicMaterial({ color: 0x808080 });
+      const satellite = new THREE.Mesh(satelliteGeometry, satelliteMaterial);
+      satellite.position.set(75, 200, -150);
+      scene.add(satellite);
+    }
+
+    function addStars() {
+      const starGeometry = new THREE.BufferGeometry();
+      const starMaterial = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: Math.random() * 0.05 + 0.01,
+        transparent: true,
+        opacity: 1.0,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const starVertices = [];
+      const numStars = Math.floor(3000 * 3);
+
+      for (let i = 0; i < numStars; i++) {
+        const x = (Math.random() - 0.5) * 500;
+        const y = (Math.random() - 0.5) * 500;
+        const z = (Math.random() - 0.5) * 500;
+        starVertices.push(x, y, z);
+      }
+
+      starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+      const stars = new THREE.Points(starGeometry, starMaterial);
+      stars.layers.set(1);
+      scene.add(stars);
+    }
+
+    function createComet() {
+      const cometGeometry = new THREE.SphereGeometry(Math.random() * 0.3 + 0.2, 16, 16);
+      const cometMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.AdditiveBlending });
+      const comet = new THREE.Mesh(cometGeometry, cometMaterial);
+
+      comet.position.set((Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100);
+      comet.layers.set(1);
+      scene.add(comet);
+
+      shootingStars.push({
+        mesh: comet,
+        velocity: new THREE.Vector3(Math.random() * -0.5, Math.random() * -0.5, Math.random() * -0.5),
+      });
+
+      setTimeout(() => {
+        scene.remove(comet);
+        shootingStars = shootingStars.filter(star => star.mesh !== comet);
+      }, 4000);
+    }
+
+    function addSnow() {
+  const snowGeometry = new THREE.BufferGeometry();
+  const snowMaterial = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.01, // Taille divisée par deux
+    transparent: true,
+    opacity: 0.8,
+  });
+
+  const snowVertices = [];
+  const numSnowParticles = 250; // Nombre de particules divisé par deux
+
+  for (let i = 0; i < numSnowParticles; i++) {
+    const x = (Math.random() - 0.5) * 6; // Limite sur l'axe X
+    const y = Math.random() * 6;         // Limite sur l'axe Y
+    const z = 15 + Math.random() * 2;    // Position sur l'axe Z pour être proche de la caméra
+    snowVertices.push(x, y, z);
+  }
+
+  snowGeometry.setAttribute('position', new THREE.Float32BufferAttribute(snowVertices, 3));
+  snowParticles = new THREE.Points(snowGeometry, snowMaterial);
+  scene.add(snowParticles);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  shootingStars.forEach(star => {
+    star.mesh.position.add(star.velocity);
+  });
+
+  if (particles) {
+    const positions = particles.geometry.attributes.position.array;
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i + 2] += (Math.random() - 0.5) * 0.01;
+    }
+    particles.geometry.attributes.position.needsUpdate = true;
+  }
+
+  if (snowParticles) {
+    const positions = snowParticles.geometry.attributes.position.array;
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] += (Math.random() - 0.5) * 0.01;  // Mouvement horizontal aléatoire
+      positions[i + 1] -= 0.01;                      // Mouvement vers le bas
+
+      // Lorsque les particules de neige passent sous la caméra, les réinitialiser en haut
+      if (positions[i + 1] < -3) {
+        positions[i + 1] = Math.random() * 6 + 3; // Réapparaît au-dessus, à une position entre y = 3 et y = 9
+      }
+    }
+    snowParticles.geometry.attributes.position.needsUpdate = true;
+  }
+
+  renderer.render(scene, camera);
+}
+
+
+    loadImage(currentImageIndex);
+    addMoon();
+    addSatellite();
+    addStars();
+    addSnow();
+    setInterval(createComet, 1000);
+
+    document.getElementById('arrow-left').addEventListener('click', () => {
+      if (isTransitioning) return;
+
+      currentImageIndex = currentImageIndex === 1 ? maxImageIndex : currentImageIndex - 1;
+      loadImage(currentImageIndex);
+    });
+
+    document.getElementById('arrow-right').addEventListener('click', () => {
+      if (isTransitioning) return;
+
+      currentImageIndex = currentImageIndex === maxImageIndex ? 1 : currentImageIndex + 1;
+      loadImage(currentImageIndex);
+    });
+
+    camera.position.set(0, 0, 20);
+    camera.lookAt(0, 0, 0);
+    camera.layers.enable(1);
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      shootingStars.forEach(star => {
+        star.mesh.position.add(star.velocity);
+      });
+
+      if (particles) {
+        const positions = particles.geometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+          positions[i + 2] += (Math.random() - 0.5) * 0.01;
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+      }
+
+      if (snowParticles) {
+        const positions = snowParticles.geometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+          positions[i] += (Math.random() - 0.5) * 0.01;
+          positions[i + 1] -= 0.01;
+
+          if (positions[i + 1] < -5) {
+            positions[i + 1] = Math.random() * 10 + 5;
+          }
+        }
+        snowParticles.geometry.attributes.position.needsUpdate = true;
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('mousedown', (event) => {
+      isDragging = true;
+      previousMousePosition = { x: event.clientX, y: event.clientY };
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      if (isDragging) {
+        const deltaMove = {
+          x: event.clientX - previousMousePosition.x,
+          y: event.clientY - previousMousePosition.y,
+        };
+
+        camera.rotation.y -= deltaMove.x * 0.005;
+        camera.rotation.x -= deltaMove.y * 0.005;
+
+        previousMousePosition = { x: event.clientX, y: event.clientY };
+      }
+    });
+
+    document.getElementById('resetCamera').addEventListener('click', () => {
+      camera.position.set(0, 0, 20);
+      camera.lookAt(0, 0, 0);
+    });
+
+    document.getElementById('toggleZoom').addEventListener('click', () => {
+      const zoomDuration = 1000 / 1.5;
+      const startPosition = camera.position.clone();
+      const targetPosition = isZoomedIn
+        ? new THREE.Vector3(0, 0, 20)
+        : new THREE.Vector3(0, 0, 2);
+
+      const startTime = performance.now();
+
+      function animateZoom(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / zoomDuration, 1);
+        camera.position.lerpVectors(startPosition, targetPosition, progress);
+        camera.lookAt(0, 0, 0);
+
+        if (progress < 1) {
+          requestAnimationFrame(animateZoom);
+        } else {
+          isZoomedIn = !isZoomedIn;
+        }
+      }
+      requestAnimationFrame(animateZoom);
+    });
+  </script>
+</body>
+</html>
